@@ -1,9 +1,10 @@
 package com.crystalfront.mobilecommand;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.Color;
 import android.graphics.PixelFormat;
-import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
@@ -13,23 +14,31 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
-import android.widget.FrameLayout;
+import android.webkit.ConsoleMessage;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 
-/**
- * 100% Native Android OpenGL ES 3.0 3D RTS Activity Host (No WebView Wrapper).
- * Combines:
- *  - GLSurfaceView (OpenGL ES 3.0 hardware 3D pipeline on Snapdragon Adreno / ARM Mali)
- *  - HudOverlayView (120Hz DPI-scaled vector tactical HUD & 3D raycast multi-touch controller)
- *  - SoundEngine (Native 44.1kHz 16-bit PCM procedural DSP audio & adaptive music)
- *  - AOSP Direct HWC2 DEVICE Overlay promotion, LTPO 120Hz/144Hz mode, and ADPF Thermal Governor
- */
 public class MainActivity extends Activity implements Choreographer.FrameCallback {
-    private GLSurfaceView glSurfaceView;
-    private HudOverlayView hudOverlayView;
-    private SoundEngine soundEngine;
-    private GameState gameState;
+    private WebView webView;
+    private static boolean nativeLoaded = false;
+
+    static {
+        try {
+            System.loadLibrary("crystalfront_native");
+            nativeLoaded = true;
+        } catch (Throwable ignored) {
+            nativeLoaded = false;
+        }
+    }
+
+    private native void nativeInitEngine(long targetWorkDurationNs);
+    private native void nativeReportWorkDurationNs(long actualDurationNs);
 
     @Override
+    @SuppressLint("SetJavaScriptEnabled")
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
@@ -38,6 +47,7 @@ public class MainActivity extends Activity implements Choreographer.FrameCallbac
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         // 2. Unlock LTPO 90Hz / 120Hz / 144Hz Display Mode
+        float maxRefreshHz = 60.0f;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 Display defaultDisplay = getWindowManager().getDefaultDisplay();
@@ -50,6 +60,7 @@ public class MainActivity extends Activity implements Choreographer.FrameCallbac
                         }
                     }
                     if (highRateMode != null && highRateMode.getRefreshRate() > 60.0f) {
+                        maxRefreshHz = highRateMode.getRefreshRate();
                         WindowManager.LayoutParams params = getWindow().getAttributes();
                         params.preferredDisplayModeId = highRateMode.getModeId();
                         getWindow().setAttributes(params);
@@ -57,8 +68,9 @@ public class MainActivity extends Activity implements Choreographer.FrameCallbac
                 }
             } catch (Throwable ignored) {}
         }
+        long targetFrameIntervalNs = (long) (1000000000.0f / maxRefreshHz);
 
-        // 3. Report AOSP GameManager Gameplay State to lock Adreno/Mali GPU clocks
+        // 3. Report AOSP GameManager Gameplay State to lock Snapdragon Adreno / ARM Mali GPU clocks
         if (Build.VERSION.SDK_INT >= 31) {
             try {
                 Object gameManager = getSystemService("game");
@@ -70,33 +82,48 @@ public class MainActivity extends Activity implements Choreographer.FrameCallbac
             } catch (Throwable ignored) {}
         }
 
-        // 4. Initialize Native 3D RTS Engine & 44.1kHz PCM Audio DSP
-        soundEngine = new SoundEngine();
-        soundEngine.init();
-        gameState = new GameState(soundEngine);
+        if (nativeLoaded) {
+            try {
+                nativeInitEngine(targetFrameIntervalNs);
+            } catch (Throwable ignored) {}
+        }
 
-        // 5. Build Native OpenGL ES 3.0 3D Surface + Hardware HUD Overlay
-        FrameLayout rootLayout = new FrameLayout(this);
-
-        glSurfaceView = new GLSurfaceView(this);
-        glSurfaceView.setEGLContextClientVersion(3);
-        glSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 24, 0);
-        glSurfaceView.setRenderer(new Renderer3D(gameState));
-        glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
-
-        hudOverlayView = new HudOverlayView(this, gameState, soundEngine);
-
-        rootLayout.addView(glSurfaceView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT));
-        rootLayout.addView(hudOverlayView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT));
-
-        setContentView(rootLayout);
+        // 4. Configure Hardware-Accelerated WebGL 2.0 Surface & Multi-Touch Pinch-to-Zoom
+        webView = new WebView(this);
+        webView.setBackgroundColor(Color.BLACK);
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        setContentView(webView);
         enableImmersiveFullscreen();
 
-        // 6. Register ADPF Thermal Status Listener
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(true);
+        try {
+            settings.setAllowFileAccessFromFileURLs(true);
+            settings.setAllowUniversalAccessFromFileURLs(true);
+        } catch (Throwable ignored) {}
+        settings.setLoadWithOverviewMode(true);
+        settings.setUseWideViewPort(true);
+        settings.setSupportZoom(false);
+        settings.setBuiltInZoomControls(false);
+        settings.setDisplayZoomControls(false);
+
+        webView.addJavascriptInterface(new AdpfJsBridge(), "AndroidADPFBridge");
+        webView.setWebViewClient(new WebViewClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
+                return true;
+            }
+        });
+
+        webView.loadUrl("file:///android_asset/index.html");
+
+        // 5. Register ADPF Thermal Status Listener for Dynamic SGSR Resolution Scaling
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
                 PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
@@ -104,9 +131,15 @@ public class MainActivity extends Activity implements Choreographer.FrameCallbac
                     pm.addThermalStatusListener(new PowerManager.OnThermalStatusChangedListener() {
                         @Override
                         public void onThermalStatusChanged(int status) {
-                            synchronized (gameState) {
-                                gameState.gfxQuality = (status >= 3) ? "low" : (status == 2) ? "medium" : "high";
-                            }
+                            webView.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    webView.evaluateJavascript(
+                                        "window.__onAndroidThermalStatus && window.__onAndroidThermalStatus(" + status + ");",
+                                        null
+                                    );
+                                }
+                            });
                         }
                     });
                 }
@@ -116,23 +149,15 @@ public class MainActivity extends Activity implements Choreographer.FrameCallbac
         Choreographer.getInstance().postFrameCallback(this);
     }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
-        if (glSurfaceView != null) glSurfaceView.onResume();
-        enableImmersiveFullscreen();
-    }
-
-    @Override
-    protected void onPause() {
-        if (glSurfaceView != null) glSurfaceView.onPause();
-        super.onPause();
-    }
-
-    @Override
-    protected void onDestroy() {
-        if (soundEngine != null) soundEngine.shutdown();
-        super.onDestroy();
+    public class AdpfJsBridge {
+        @JavascriptInterface
+        public void reportWorkDurationNs(long durationNs) {
+            if (nativeLoaded && durationNs > 0L) {
+                try {
+                    nativeReportWorkDurationNs(durationNs);
+                } catch (Throwable ignored) {}
+            }
+        }
     }
 
     @Override
@@ -170,8 +195,6 @@ public class MainActivity extends Activity implements Choreographer.FrameCallbac
 
     @Override
     public void onBackPressed() {
-        synchronized (gameState) {
-            gameState.inTitleScreen = !gameState.inTitleScreen;
-        }
+        webView.evaluateJavascript("document.getElementById('btnOpenTitleScreen')?.click();", null);
     }
 }

@@ -2,51 +2,87 @@
 setlocal EnableDelayedExpansion
 
 echo ============================================================================
-echo   Crystal Front v3.0 - Automatic Folder Fixer ^& GitHub Push Script
+echo   Crystal Front v4.0 (Native 3D Engine) - Auto Git Init ^& GitHub Push
 echo ============================================================================
 echo.
 
-:: 1. Automatically switch to C:\Users\JamesHowrey\Desktop\gamedev even if run from Downloads!
-if exist "C:\Users\JamesHowrey\Desktop\gamedev" (
-    cd /d "C:\Users\JamesHowrey\Desktop\gamedev"
-    echo [OK] Located project folder: C:\Users\JamesHowrey\Desktop\gamedev
-) else (
-    cd /d "%~dp0"
-    echo [OK] Working in folder: %CD%
+where git >nul 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Git is not installed or not in your PATH.
+    pause
+    exit /b 1
 )
 
-:: 2. If Windows extracted the zip into a subfolder, copy all updated files into the root folder
+:: 1. Remember the folder where this script was launched
+set "LAUNCH_DIR=%~dp0"
+
+:: 2. Try to rescue any existing GitHub remote URL before changing directories
+set "SAVED_URL="
+if exist "%LAUNCH_DIR%.git" (
+    pushd "%LAUNCH_DIR%"
+    for /f "delims=" %%U in ('git remote get-url origin 2^>nul') do set "SAVED_URL=%%U"
+    popd
+)
+if not defined SAVED_URL (
+    if exist "C:\Users\JamesHowrey\Desktop\gamedev\.git" (
+        pushd "C:\Users\JamesHowrey\Desktop\gamedev"
+        for /f "delims=" %%U in ('git remote get-url origin 2^>nul') do set "SAVED_URL=%%U"
+        popd
+    )
+)
+
+:: 3. Switch to C:\Users\JamesHowrey\Desktop\gamedev (or stay in launch folder)
+if exist "C:\Users\JamesHowrey\Desktop\gamedev" (
+    cd /d "C:\Users\JamesHowrey\Desktop\gamedev"
+    echo [OK] Target Project Folder: C:\Users\JamesHowrey\Desktop\gamedev
+) else (
+    cd /d "%LAUNCH_DIR%"
+    echo [OK] Target Project Folder: %CD%
+)
+
+:: 4. If this script was launched from an extracted zip folder (e.g. Downloads\crystal_front...), copy all v4.0 files into target folder
+if exist "%LAUNCH_DIR%app\src\main\assets\index.html" (
+    if /i not "%LAUNCH_DIR%"=="%CD%\" (
+        echo [SYNC] Copying v4.0 Native 3D Engine files from "%LAUNCH_DIR%" into "%CD%"...
+        xcopy "%LAUNCH_DIR%*" "%CD%\" /E /Y /Q >nul 2>nul
+    )
+)
+
+:: Also check any crystal_front_android_playstore_project* subfolders in Desktop\gamedev or Downloads
 for /d %%D in ("crystal_front_android_playstore_project*" "%USERPROFILE%\Downloads\crystal_front_android_playstore_project*") do (
     if exist "%%~fD\app\src\main\assets\index.html" (
-        echo [SYNC] Copying updated v3.0 files from "%%~fD"...
+        echo [SYNC] Copying v4.0 Native 3D Engine files from "%%~fD"...
         xcopy "%%~fD\*" "%CD%\" /E /Y /Q >nul 2>nul
     )
 )
 
-:: 3. Delete all legacy .gradle.kts, .kt, and shader files so they cannot break Gradle
-echo [CLEAN] Removing legacy .gradle.kts and .kt files...
+:: 5. ALWAYS initialize Git repository so "fatal: not a git repository" NEVER happens!
+echo [GIT] Ensuring Git repository is initialized in %CD%...
+git init
+
+:: Ensure local git user name and email are configured so commit never fails
+git config user.name >nul 2>nul
+if %ERRORLEVEL% NEQ 0 git config user.name "James Howrey"
+git config user.email >nul 2>nul
+if %ERRORLEVEL% NEQ 0 git config user.email "jrhowrey@gmail.com"
+
+:: 6. Clean any legacy .gradle.kts, .kt, and shader files
+echo [CLEAN] Removing any legacy .gradle.kts and .kt files...
 del /f /q "settings.gradle.kts" 2>nul
 del /f /q "build.gradle.kts" 2>nul
 del /f /q "app\build.gradle.kts" 2>nul
 del /f /q "app\src\main\java\com\crystalfront\mobilecommand\MainActivity.kt" 2>nul
+del /f /q "app\src\main\assets\index.html" 2>nul
+del /f /q "app\src\main\java\com\crystalfront\mobilecommand\HudOverlayView.java" 2>nul
+del /f /q "app\src\main\java\com\crystalfront\mobilecommand\MeshBuilder3D.java" 2>nul
+del /f /q "app\src\main\java\com\crystalfront\mobilecommand\GameState.java" 2>nul
+del /f /q "app\src\main\java\com\crystalfront\mobilecommand\SoundEngine.java" 2>nul
 if exist "app\src\main\java\com\tiberianmobile" rmdir /s /q "app\src\main\java\com\tiberianmobile" 2>nul
 if exist "app\src\main\shaders" rmdir /s /q "app\src\main\shaders" 2>nul
 
-:: 4. Ensure app\release-keystore.jks exists (copy from keystore\ if needed)
-if not exist "app\release-keystore.jks" (
-    if exist "keystore\crystalfront-release-key.jks" (
-        copy /y "keystore\crystalfront-release-key.jks" "app\release-keystore.jks" >nul
-        set "KS_PASS=crystal2026"
-        set "KS_ALIAS=crystalfront_key"
-    ) else if exist "keystore\tiberian-release-key.jks" (
-        copy /y "keystore\tiberian-release-key.jks" "app\release-keystore.jks" >nul
-        set "KS_PASS=tiberian2026"
-        set "KS_ALIAS=tiberian_key"
-    )
-)
-
-:: 5. Directly write the clean 52-line app\build.gradle (eliminates line 97 error completely!)
+:: 7. Write clean 48-line app\build.gradle
 echo [FIX] Writing clean app\build.gradle...
+if not exist "app" mkdir "app"
 (
 echo plugins {
 echo     id 'com.android.application'
@@ -60,8 +96,8 @@ echo     defaultConfig {
 echo         applicationId "com.crystalfront.mobilecommand"
 echo         minSdk 24
 echo         targetSdk 34
-echo         versionCode 4
-echo         versionName "4.0.0-native3d"
+echo         versionCode 5
+echo         versionName "5.0.0-3d-vtol"
 echo     }
 echo.
 echo     sourceSets {
@@ -96,7 +132,7 @@ echo dependencies {
 echo }
 ) > "app\build.gradle"
 
-:: 6. Write clean root build.gradle and settings.gradle
+:: 8. Write clean root build.gradle and settings.gradle
 (
 echo plugins {
 echo     id 'com.android.application' version '8.5.2' apply false
@@ -122,7 +158,7 @@ echo rootProject.name = "CrystalFrontMobileCommand"
 echo include ':app'
 ) > "settings.gradle"
 
-:: 7. Write self-cleaning GitHub Actions workflow (.github\workflows\build-apk-aab.yml)
+:: 9. Write GitHub Actions workflow (.github\workflows\build-apk-aab.yml)
 if not exist ".github\workflows" mkdir ".github\workflows"
 (
 echo name: Build Signed Android APK ^& Play Store AAB
@@ -174,27 +210,46 @@ echo           name: CrystalFront-PlayStore-AAB
 echo           path: app/build/outputs/bundle/release/*.aab
 ) > ".github\workflows\build-apk-aab.yml"
 
-:: 8. Commit and force-push to GitHub
-set "EXISTING_URL="
-for /f "delims=" %%U in ('git remote get-url origin 2^>nul') do set "EXISTING_URL=%%U"
+:: 10. Resolve GitHub remote URL, commit, and force-push
+set "REPO_URL="
+for /f "delims=" %%U in ('git remote get-url origin 2^>nul') do set "REPO_URL=%%U"
+if not defined REPO_URL set "REPO_URL=!SAVED_URL!"
 
-if defined EXISTING_URL (
-    echo [GIT] Using existing remote: !EXISTING_URL!
-    set "REPO_URL=!EXISTING_URL!"
+if defined REPO_URL (
+    echo [GIT] Found GitHub remote URL: !REPO_URL!
 ) else (
-    set /p REPO_URL="Enter your GitHub Repository URL: "
+    echo.
+    echo Please paste your GitHub Repository URL ^(e.g. https://github.com/YourUsername/crystal-front-mobile.git^):
+    set /p REPO_URL="Repository URL: "
 )
 
+if "!REPO_URL!"=="" (
+    echo [ERROR] No GitHub URL provided. Please run again and paste your repository URL.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [GIT] Staging all files and committing v4.0 Native 3D Engine...
 git add -A
-git commit -m "Fix app/build.gradle (48 lines, remove line 97 error) and build APK/AAB"
+git commit -m "Crystal Front v4.0: Native Android OpenGL ES 3.0 3D Engine + Clean Gradle Build"
 git branch -M main
 git remote remove origin 2>nul
 git remote add origin !REPO_URL!
+
+echo [GIT] Force-pushing to !REPO_URL!...
 git push -u origin main --force
 
 echo.
-echo ============================================================================
-echo   [DONE] Verified app\build.gradle was replaced and force-pushed to GitHub!
-echo   Check your GitHub Actions tab now.
-echo ============================================================================
+if %ERRORLEVEL% EQU 0 (
+    echo ============================================================================
+    echo   [SUCCESS] PUSHED TO GITHUB!
+    echo   Go to your GitHub repo -> Actions tab -> click the top run ->
+    echo   scroll to the bottom "Artifacts" section to download your APK and AAB!
+    echo ============================================================================
+) else (
+    echo ============================================================================
+    echo   [ERROR] Push failed. Please verify the repository URL above.
+    echo ============================================================================
+)
 pause

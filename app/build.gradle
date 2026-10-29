@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.crystalfront.mobilecommand'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.crystalfront.mobilecommand"
+        minSdk 24
+        targetSdk 34
+        versionCode 4
+        versionName "4.0.0-native3d"
+    }
+
+    sourceSets {
+        main {
+            shaders.srcDirs = []
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.debug
+        }
+        debug {
+            applicationIdSuffix ".debug"
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+}
